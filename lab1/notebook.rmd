@@ -1,0 +1,41 @@
+---
+title: "Lab1"
+author: Stanisław Antonowicz
+date: 06.03.2021
+output: html_notebook
+---
+
+## Task:
+Create a heatmap from previous labs, but using ggplot2. Scaled by row, with no dendrogram.
+
+### Imports
+```{r}
+library(Biobase)
+library(GEOquery)
+library(tidyverse)
+```
+### Reading data
+```{r}
+data <- getGEO('GDS39', destdir=".")
+```
+### Preparing, tidying data for heatmap plotting (with dplyr)
+```{r}
+data.geneexp <- Table(data) %>% drop_na()
+data.geneexp.tidy <- pivot_longer(data.geneexp, cols=-c(1,2), names_to="timepoint", values_to="expression")
+```
+
+```{r}
+head(data.geneexp.tidy, 100)
+```
+```{r}
+h <- ggplot(data.geneexp.tidy, mapping = aes(x = timepoint, y = IDENTIFIER, fill = expression)) +
+     geom_tile() +
+     scale_fill_gradient2(low = "#0000ff", mid = "white", high = "#ffff00", midpoint = 0, limits = c(-3, 3)) +
+     theme(axis.text.y = element_blank()) +
+     ylab("gene") +
+     theme(axis.text.x = element_text(angle = 45, hjust = 1))
+h
+```
+```{r}
+ggsave("/Users/ant/studia/biological-systems-modelling/lab1/Antonowicz_problem1.png", plot = h, device = png())
+```
