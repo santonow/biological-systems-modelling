@@ -1,0 +1,106 @@
+---
+title: "Lab3"
+author: Stanisław Antonowicz
+date: 20.03.2021
+output: html_notebook
+---
+
+```{r}
+library(devtools)
+library(Biobase)
+library(limma)
+library(edge)
+library(genefilter)
+library(qvalue)
+library(tidyverse)
+library(data.table)
+library(corpcor)
+```
+
+```{r}
+load("bottomly.Rdata")
+```
+
+```{r}
+edata <- as.matrix(exprs(bottomly.eset))
+dim(edata)
+```
+```{r}
+edata <- edata[rowMeans(edata) > 10, ]
+edata <- log2(edata + 1)
+```
+
+```{r}
+dim(edata)
+```
+Both columns and rows are clustered; scaled by column; dendrogram on columns
+```{r}
+library(RColorBrewer)
+library(gplots)
+my_palette <- colorRampPalette(c("blue", "white", "yellow"))(n = 299)
+
+heatmap.2(
+  edata,
+  Rowv = TRUE,
+  Colv = TRUE,
+  main = "Bottomly clustered rows and cols",
+  col = my_palette,
+  dendrogram = "column",
+  scale = "column",
+  trace = "none",
+  density.info = "none"
+)
+dev.print(pdf, "/Users/ant/studia/biological-systems-modelling/lab2/Antonowicz_problem1.png")
+```
+Computing SVD...
+```{r}
+edata <- t(scale(t(edata), scale = FALSE, center = TRUE))
+svd.out <- svd(edata)
+PC <- data.table(svd.out$v, pData(bottomly.eset))
+```
+Component 2 and 3 look nice (linearly separable!)
+```{r}
+ggplot(PC) + geom_point(aes(x=V2, y=V3, col=as.factor(strain)), size = 5)
+
+ggsave("/Users/ant/studia/biological-systems-modelling/lab2/Antonowicz_problem2.png",
+       device = png())
+```
+Loading loadings to a data table, creating a scatter plot.
+```{r}
+loading.vectors <- data.table(t(svd.out$u), pData(bottomly.eset))
+
+ggplot(loading.vectors) + geom_point(aes(x=V1, y=V2, col=as.factor(strain)), size = 5)
+ggsave("/Users/ant/studia/biological-systems-modelling/lab2/Antonowicz_problem3.png",
+       device = png())
+```
+Making a tidy datatable with top 5 loading vectors.
+```{r}
+top5.loading.vectors <- loading.vectors %>% select(V1:V5) %>% gather()
+```
+```{r}
+ggplot(top5.loading.vectors) + geom_violin(aes(x = as.factor(key), y = value), draw_quantiles = c(0.25, 0.5, 0.75)) + geom_jitter(aes(x = as.factor(key), y = value))
+
+ggsave("/Users/ant/studia/biological-systems-modelling/lab2/Antonowicz_problem4.png",
+       device = png())
+```
+
+
+```{r}
+library(Rtsne)
+```
+Clustering with k-means.
+```{r}
+clusters <- kmeans(edata, centers = 5)
+```
+```{r}
+set.seed(1)
+tsne.out <- Rtsne(edata, pca = TRUE, perplexity = 30)
+tsne.out <- data.table(tsne.out$Y)
+```
+```{r}
+ggplot(tsne.out) + geom_point(aes(x = V1, y = V2, colour = as.factor(clusters$cluster)))
+ggsave("/Users/ant/studia/biological-systems-modelling/lab2/Antonowicz_problem5.png",
+       device=png())
+```
+
+
