@@ -1,0 +1,188 @@
+---
+title: "Lab 10 homework"
+author: Stanisław Antonowicz
+date: 22/05/2021
+output: html_notebook
+---
+
+# Homework 1
+## Analyze data from *Zheng et al., 2017* similarly to the PBMC3k.
+
+I downloaded `fresh_68k_pbmc_donor_a_filtered_gene_bc_matrices.tar.gz` file and uncompressed it.
+
+### Loading libraries, downloading data
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+```
+```{r}
+
+
+# Load the PBMC dataset
+pbmc.data <- Read10X(data.dir = "/Users/ant/studia/biological-systems-modelling/lab10/filtered_matrices_mex/hg19/")
+# Initialize the Seurat object with the raw (non-normalized data).
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc68k", min.cells = 3, min.features = 200)
+pbmc
+```
+### Computing an additional cell-level metric: a percentage of reads that map to the mitochondrial genome
+A theoretical justification is that
+> Low-quality / dying cells often exhibit extensive mitochnodrial contamination.
+```{r}
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+```
+### Visualizing different metrics, filtering the data
+I guess given how many cells are there the plots look worse than in the Seurat tutorial.
+```{r}
+vlnplot <- VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+vlnplot
+```
+Maybe `FeatureScatter` will look better.
+```{r}
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+It looks really similar to the one in Seurat tutorial. I will not change their recommended cutoff values.
+
+```{r}
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+```
+### Normalizing the data
+With the default parameters.
+```{r}
+pbmc <- NormalizeData(pbmc)
+```
+### Selecting highly variable genes
+As advised in the Seurat tutorial, the number of most variable genes kept is set to 2000.
+
+```{r}
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(pbmc), 10)
+print(top10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(pbmc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+```
+Interesting -- PPBP is the most highly variable gene in both datasets. Also, PF4, LYZ and IGLL5 are in the top 10 in both of them.
+
+### Scaling the data
+
+This is really basic -- subtract the mean, divide by variance.
+
+This eats all of the RAM (on a 16GB machine) and then crashes when done on all genes, so doing it the default way -- on the most highly expressed ones. The tutorial says:
+> Your PCA and clustering results will be unaffected.
+
+I think this is the most important part, so I'm deciding to go with the less resource-intensive version.
+```{r}
+pbmc <- ScaleData(pbmc)
+```
+### Running PCA, visualizing
+Sadly without a heatmap, as it requires scaling the whole dataset.
+```{r}
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+```
+```{r}
+print(pbmc[["pca"]], dims = 1:5, nfeatures = 5)
+```
+```{r}
+VizDimLoadings(pbmc, dims = 1:2, reduction = "pca")
+```
+```{r}
+DimPlot(pbmc, reduction = "pca")
+```
+### Determining dataset's dimensionality
+
+First trying with JackStraw, although it might take really long.
+```{r}
+pbmc <- JackStraw(pbmc, num.replicate = 100)
+pbmc <- ScoreJackStraw(pbmc, dims = 1:20)
+```
+```{r}
+JackStrawPlot(pbmc, dims = 1:20)
+```
+```{r}
+ElbowPlot(pbmc)
+```
+According to JackStraw procedure, all top 20 PCs are significant. Looking at the ElbowPlot, I think after 15 PCs the plot flattens, so I'm sticking to 15 dimensions in the further analyses.
+### Clustering the cells
+I tweaked the resolution parameter to achieve 10 clusters.
+```{r}
+pbmc <- FindNeighbors(pbmc, dims = 1:15)
+pbmc <- FindClusters(pbmc, resolution = 0.15)
+```
+
+### Visualizing the clustering with UMAP
+t-SNE takes extremely long to compute, so sticking with UMAP (I think it's better anyway).
+```{r}
+pbmc <- RunUMAP(pbmc, dims = 1:15)
+```
+
+```{r}
+saveRDS(pbmc, file = "68k_pbmc.rds")
+```
+```{r}
+DimPlot(pbmc, reduction = "umap")
+```
+
+# Homework 2
+A little bit of hacking since I don't know a better way.
+First I create a different Seurat object for each cluster.
+```{r}
+subclusters.objects <- list()
+
+for (cluster.number in 0:(length(unique(pbmc[["seurat_clusters"]][[1]])) - 1)) {
+  subclusters.objects[[cluster.number + 1]] <- FindSubCluster(pbmc,
+                         cluster.number,
+                         graph.name = "RNA_snn",
+  )
+}
+pbmc <- subclusters.objects[[1]]  # little hack to make sure sub.cluster field is properly intialized
+```
+Then I'm copying subcluster values to sub.cluster metadata in the original Seurat object.
+```{r}
+
+for (cluster.number in 0:(length(unique(pbmc[["seurat_clusters"]][[1]])) - 1)) {
+  pbmc[["sub.cluster"]][
+    pbmc[["seurat_clusters"]] == cluster.number
+  ] <- subclusters.objects[[cluster.number + 1]][["sub.cluster"]][[1]][
+    pbmc[["seurat_clusters"]] == cluster.number
+  ]
+}
+```
+
+### Visualizing subclusters in one UMAP plot.
+```{r}
+DimPlot(pbmc, reduction = "umap", label = TRUE, group.by = "sub.cluster", label.size = 3)
+```
+```{r}
+subsetted <- SplitObject(pbmc, split.by = "ident")
+```
+### Visualizing subclusters on separate plots.
+```{r}
+first.cluster <- subsetted[[1]][["seurat_clusters"]][[1]][1]
+plot <- DimPlot(
+        subsetted[[1]],
+        reduction = "umap",
+        label = TRUE,
+        group.by = "sub.cluster",
+) + ggtitle(paste("Cluster", as.character(first.cluster), sep = " "))
+for (i in 2:(length(unique(pbmc[["seurat_clusters"]][[1]])))) {
+  cluster <- subsetted[[i]][["seurat_clusters"]][[1]][1]
+  subplot <- DimPlot(
+          subsetted[[i]],
+          reduction = "umap",
+          label = TRUE,
+          group.by = "sub.cluster",
+  ) + ggtitle(paste("Cluster", cluster, sep = " "))
+  plot <- plot + subplot
+}
+plot
+```
+
